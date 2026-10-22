@@ -40,23 +40,47 @@ jobs:
           fi
           test -x "$app"
           cd "$GITHUB_WORKSPACE"
-          "$app" --build --model MacBookPro10,1 --disable_sip --disable_smb --verbose
+          python3 - "$app" <<'PY'
+          import pathlib, re, shutil, subprocess, sys
+          destination = pathlib.Path.cwd() / "output" / "EFI"
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          process = subprocess.Popen(
+              [sys.argv[1], "--build", "--model", "MacBookPro10,1",
+               "--disable_sip", "--disable_smb", "--verbose"],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+          )
+          copied = False
+          for line in process.stdout:
+              print(line, end="", flush=True)
+              match = re.fullmatch(r"\s*(/.*?/Build-Folder/OpenCore-Build)\s*", line)
+              if match and not copied:
+                  # OCLP deletes its temporary directory at exit: preserve the
+                  # finished build immediately after its completion message.
+                  source = pathlib.Path(match.group(1)) / "EFI"
+                  shutil.copytree(source, destination)
+                  copied = True
+                  print("Generated EFI preserved in output/EFI", flush=True)
+          code = process.wait()
+          if code != 0:
+              raise SystemExit(code)
+          if not copied:
+              raise SystemExit("OCLP did not report a completed EFI build")
+          PY
 
       - name: Check and package the generated EFI
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          config='Build-Folder/OpenCore-Build/EFI/OC/config.plist'
+          config='output/EFI/OC/config.plist'
           test -s "$config"
           plutil -lint "$config"
           test "$(/usr/libexec/PlistBuddy -c 'Print :#Revision:Original-Model' "$config")" = 'MacBookPro10,1'
           version=$(/usr/libexec/PlistBuddy -c 'Print :#Revision:Build-Version' "$config")
           case "$version" in 2.5.1*) ;; *) exit 1 ;; esac
           test "$(/usr/libexec/PlistBuddy -c 'Print :Misc:Security:SecureBootModel' "$config")" = 'Disabled'
-          test -s Build-Folder/OpenCore-Build/EFI/BOOT/BOOTx64.efi
-          test -s Build-Folder/OpenCore-Build/EFI/OC/OpenCore.efi
+          test -s output/EFI/BOOT/BOOTx64.efi
+          test -s output/EFI/OC/OpenCore.efi
           mkdir -p output
-          cp -R Build-Folder/OpenCore-Build/EFI output/EFI
           printf 'OCLP=2.5.1\nMODEL=MacBookPro10,1\nVERBOSE=enabled\n' > output/BUILD-INFO.txt
 
       - name: Upload EFI
