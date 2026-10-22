@@ -42,7 +42,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           python3 - "$app" <<'PY'
           import pathlib, re, shutil, subprocess, sys
-          destination = pathlib.Path.cwd() / "output" / "EFI"
+          destination = pathlib.Path.cwd() / "generated-build"
           destination.parent.mkdir(parents=True, exist_ok=True)
           process = subprocess.Popen(
               [sys.argv[1], "--build", "--model", "MacBookPro10,1",
@@ -56,10 +56,10 @@ jobs:
               if match and not copied:
                   # OCLP deletes its temporary directory at exit: preserve the
                   # finished build immediately after its completion message.
-                  source = pathlib.Path(match.group(1)) / "EFI"
+                  source = pathlib.Path(match.group(1))
                   shutil.copytree(source, destination)
                   copied = True
-                  print("Generated EFI preserved in output/EFI", flush=True)
+                  print("Generated OpenCore build preserved in generated-build", flush=True)
           code = process.wait()
           if code != 0:
               raise SystemExit(code)
@@ -71,6 +71,16 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
+          mkdir -p output
+          cp -R generated-build/EFI output/EFI
+          if [ -d generated-build/System ]; then
+            cp -R generated-build/System output/System
+          fi
+          if [ ! -s output/EFI/BOOT/BOOTx64.efi ]; then
+            test -s generated-build/System/Library/CoreServices/boot.efi
+            mkdir -p output/EFI/BOOT
+            cp generated-build/System/Library/CoreServices/boot.efi output/EFI/BOOT/BOOTx64.efi
+          fi
           config='output/EFI/OC/config.plist'
           test -s "$config"
           plutil -lint "$config"
