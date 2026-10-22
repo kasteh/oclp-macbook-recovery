@@ -1,0 +1,68 @@
+name: Build OCLP 2.5.1 for MacBookPro10,1
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-efi.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-efi:
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download official OCLP 2.5.1
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/dortania/OpenCore-Legacy-Patcher/releases/download/2.5.1/OpenCore-Patcher.pkg \
+            --output "$RUNNER_TEMP/OpenCore-Patcher.pkg"
+          pkgutil --check-signature "$RUNNER_TEMP/OpenCore-Patcher.pkg"
+          shasum -a 256 "$RUNNER_TEMP/OpenCore-Patcher.pkg"
+
+      - name: Install OCLP on the temporary GitHub runner
+        run: |
+          set -euo pipefail
+          sudo installer -pkg "$RUNNER_TEMP/OpenCore-Patcher.pkg" -target /
+
+      - name: Build EFI for the target Mac
+        run: |
+          set -euo pipefail
+          app='/Library/Application Support/Dortania/OpenCore-Patcher.app/Contents/MacOS/OpenCore-Patcher'
+          if [ ! -x "$app" ]; then
+            app='/Applications/OpenCore-Patcher.app/Contents/MacOS/OpenCore-Patcher'
+          fi
+          test -x "$app"
+          cd "$GITHUB_WORKSPACE"
+          "$app" --build --model MacBookPro10,1 --disable_sip --disable_smb --verbose
+
+      - name: Check and package the generated EFI
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          config='Build-Folder/OpenCore-Build/EFI/OC/config.plist'
+          test -s "$config"
+          plutil -lint "$config"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :#Revision:Original-Model' "$config")" = 'MacBookPro10,1'
+          version=$(/usr/libexec/PlistBuddy -c 'Print :#Revision:Build-Version' "$config")
+          case "$version" in 2.5.1*) ;; *) exit 1 ;; esac
+          test "$(/usr/libexec/PlistBuddy -c 'Print :Misc:Security:SecureBootModel' "$config")" = 'Disabled'
+          test -s Build-Folder/OpenCore-Build/EFI/BOOT/BOOTx64.efi
+          test -s Build-Folder/OpenCore-Build/EFI/OC/OpenCore.efi
+          mkdir -p output
+          cp -R Build-Folder/OpenCore-Build/EFI output/EFI
+          printf 'OCLP=2.5.1\nMODEL=MacBookPro10,1\nVERBOSE=enabled\n' > output/BUILD-INFO.txt
+
+      - name: Upload EFI
+        uses: actions/upload-artifact@v4
+        with:
+          name: EFI-OCLP-2.5.1-MacBookPro10-1
+          path: output/
+          if-no-files-found: error
+          retention-days: 14
